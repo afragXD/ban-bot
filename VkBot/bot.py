@@ -1,3 +1,4 @@
+import time
 import re
 import vk_api
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
@@ -24,6 +25,9 @@ class VkBot:
         # Инициализация LongPoll
         self.longpoll = VkBotLongPoll(self.vk_session, self.group_id)
 
+        # Хранение времени последнего стикера для каждого пользователя
+        self.last_sticker_time = {}
+
     def delete_message(self, peer_id, message_id):
         """
         Удаление сообщения.
@@ -46,22 +50,31 @@ class VkBot:
         if event.type == VkBotEventType.MESSAGE_NEW:
             message = event.object.message
             peer_id = message["peer_id"]
-            text = message["text"].lower()
+            from_id = message["from_id"]  # ID отправителя
             conversation_message_id = message["conversation_message_id"]
 
+            # Проверяем, если сообщение содержит стикер
+            if "attachments" in message:
+                for attachment in message["attachments"]:
+                    if attachment["type"] == "sticker":
+                        # Получаем текущее время
+                        current_time = time.time()
+
+                        # Проверяем кулдаун на стикеры для пользователя
+                        last_time = self.last_sticker_time.get(from_id, 0)
+                        if current_time - last_time < 60:
+                            self.delete_message(peer_id, conversation_message_id)
+                            return
+
+                        # Обновляем время отправки стикера для пользователя
+                        self.last_sticker_time[from_id] = current_time
+                        return
+
             # Проверяем текст сообщения на наличие запрещённых паттернов
+            text = message["text"].lower()
             if any(pattern.search(text) for pattern in self.banned_patterns):
                 self.delete_message(peer_id, conversation_message_id)
                 return
-
-            # Проверяем репосты из запрещённых групп
-            if "attachments" in message:
-                for attachment in message["attachments"]:
-                    if attachment["type"] == "wall":
-                        repost = attachment["wall"]
-                        if "from_id" in repost and str(repost["from_id"]) in self.banned_repost_groups:
-                            self.delete_message(peer_id, conversation_message_id)
-                            return
 
     def run(self):
         """
